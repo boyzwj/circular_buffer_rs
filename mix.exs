@@ -25,7 +25,8 @@ defmodule CircularBufferRs.MixProject do
       # {:dep_from_git, git: "https://github.com/elixir-lang/my_dep.git", tag: "0.1.0"}
       {:rustler_precompiled, "~> 0.7.0"},
       {:rustler, "~> 0.23", optional: true},
-      {:benchee, "~> 1.3", only: [:dev]}
+      {:benchee, "~> 1.3", only: [:dev]},
+      {:circular_buffer, "~> 0.4.1", only: [:dev]}
     ]
   end
 end
