@@ -11,9 +11,15 @@ defmodule CircularBufferRs do
   @doc """
   Pushes the given bytes to the buffer with the given UID.
   """
-  def push(uid, bytes) do
-    Native.push(uid, bytes)
+  def push(uid, bin) when is_binary(bin) do
+    Native.push(uid, bin)
   end
+
+  def push(uid, io_list) when is_list(io_list) do
+    Native.push(uid, IO.iodata_to_binary(io_list))
+  end
+
+  def push(_uid, _), do: {:error, :invalid_input}
 
   @doc """
   Returns the last `length` elements from the buffer with the given UID.

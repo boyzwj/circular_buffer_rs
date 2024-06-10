@@ -1,8 +1,8 @@
 use std::collections::VecDeque;
 use dashmap::DashMap;
 use std::sync::Arc;
-use rustler::{Atom, Decoder, Encoder, Env, NifResult, Term};
-use rustler::types::binary::{Binary, OwnedBinary};
+use rustler::Atom;
+use rustler::types::binary::Binary;
 use std::sync::RwLock;
 use lazy_static::lazy_static;
 
