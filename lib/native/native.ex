@@ -9,7 +9,7 @@ defmodule CircularBufferRs.Native do
     base_url: "#{github_url}/releases/download/v#{version}",
     force_build: System.get_env("FORCE_CIRCULAR_BUFFER_RS_BUILD") in ["1", "true"],
     targets:
-      ~w(arm-unknown-linux-gnueabihf aarch64-unknown-linux-gnu aarch64-unknown-linux-musl aarch64-apple-darwin x86_64-apple-darwin x86_64-unknown-linux-gnu x86_64-unknown-linux-musl x86_64-pc-windows-gnu x86_64-pc-windows-msvc),
+      Enum.uniq(["aarch64-unknown-linux-musl" | RustlerPrecompiled.Config.default_targets()]),
     # nif_versions: ["2.16"],
     version: version
 
