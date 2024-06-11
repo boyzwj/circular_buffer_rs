@@ -60,12 +60,12 @@ jobs:
         id: build-crate
         uses: philss/rustler-precompiled-action@v1.0.1
         with:
-          project-name: sorted_set_nif
+          project-name: circular_buffer_rs
           project-version: ${{ env.PROJECT_VERSION }}
           target: ${{ matrix.job.target }}
           nif-version: ${{ matrix.nif }}
           use-cross: ${{ matrix.job.use-cross }}
-          project-dir: "native/sorted_set_nif"
+          project-dir: "native/circular_buffer_rs"
 
       - name: Artifact upload
         uses: actions/upload-artifact@v3

@@ -33,8 +33,8 @@ defmodule CircularBufferRs.MixProject do
     [
       maintainers: ["Discord Core Infrastructure"],
       licenses: ["MIT"],
-      name: :sorted_set_nif,
-      description: "SortedSet is a fast and efficient Rust backed sorted set.",
+      name: :circular_buffer_rs,
+      description: "CircularBufferRs is a fast and efficient Rust backed circular buffer.",
       files: [
         "lib",
         "native",
