@@ -1,11 +1,16 @@
 use std::collections::VecDeque;
-use dashmap::DashMap;
-use std::sync::Arc;
-use rustler::Atom;
+use rustler::{Atom, Env, Term};
+use rustler::resource::ResourceArc;
 use rustler::types::binary::Binary;
-use std::sync::RwLock;
-use lazy_static::lazy_static;
+use std::sync::Mutex;
+#[cfg(not(target_env = "msvc"))]
+use tikv_jemallocator::Jemalloc;
 
+
+
+#[cfg(not(target_env = "msvc"))]
+#[global_allocator]
+static GLOBAL_ALLOCATOR: Jemalloc = Jemalloc;
 mod atoms {
     rustler::atoms! {
         // Common Atoms
@@ -30,50 +35,63 @@ mod atoms {
 }
 
 
+pub struct CircularBufferResource(Mutex<CircularBuffer>);
+
+type CircularBufferArc = ResourceArc<CircularBufferResource>;
+
+
+rustler::init!("Elixir.CircularBufferRs.Native", [new, push, last, size],
+    load = load);
+
+fn load(env: Env, _info: Term) -> bool {
+    rustler::resource!(CircularBufferResource, env);
+    true
+}
+
 pub struct CircularBuffer {
-    buffer: RwLock<VecDeque<Vec<u8>>>,
+    buffer: VecDeque<Vec<u8>>,
     capacity: usize,
 }
 
 impl CircularBuffer {
-    pub fn new(capacity: usize) -> Self {
+    pub fn new(capacity: usize) -> CircularBuffer {
+        let buffer = VecDeque::with_capacity(capacity);
         CircularBuffer {
-            buffer: RwLock::new(VecDeque::with_capacity(capacity)),
+            buffer,
             capacity,
         }
     }
 
-    pub fn push(&self, item: Vec<u8>) -> Result<Atom, Atom> {
-        let mut write_guard = self.buffer.write().map_err(|_| atoms::lock_fail())?;
-        if write_guard.len() == self.capacity {
-            write_guard.pop_front(); // 如果缓冲区已满，移除最旧的元素
+    pub fn push(&mut self, item: Vec<u8>) -> Result<Atom, Atom> {
+
+        if self.buffer.len() == self.capacity {
+            self.buffer.pop_front();
         }
-        write_guard.push_back(item); // 将新元素添加到缓冲区的末尾
+        self.buffer.push_back(item); // 将新元素添加到缓冲区的末尾
         Ok(atoms::ok())
     }
 
     pub fn get(&self, index: usize) -> Option<Vec<u8>> {
-        self.buffer.read().unwrap().get(index).cloned()
+        self.buffer.get(index).cloned()
     }
 
     pub fn last(&self, length: usize) -> Result<Vec<Vec<u8>>, Atom> {
-        let read_guard = self.buffer.read().map_err(|_| atoms::lock_fail())?;
-        if length > read_guard.len() {
+        if length > self.buffer.len() {
             return Err(atoms::index_out_of_bounds());
         }
-        let end = read_guard.len();
+        let end = self.buffer.len();
         let start = end - length;
-        let result = read_guard.range(start..end).cloned().collect();
+        let result = self.buffer.range(start..end).cloned().collect();
         Ok(result)
     }
 
 
     pub fn len(&self) -> usize {
-        self.buffer.read().unwrap().len()
+        self.buffer.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.buffer.read().unwrap().is_empty()
+        self.buffer.is_empty()
     }
 
     pub fn capacity(&self) -> usize {
@@ -83,63 +101,46 @@ impl CircularBuffer {
 
 
 
-
-struct PlayerRingBuffer {
-    buffers: Arc<DashMap<u64, CircularBuffer>>,
+#[rustler::nif]
+fn new(capacity: usize) -> (Atom, CircularBufferArc) {
+    let resource = ResourceArc::new(CircularBufferResource(Mutex::new(CircularBuffer::new(capacity))));
+    (atoms::ok(), resource)
 }
 
-impl PlayerRingBuffer {
-    fn new() -> Self {
-        PlayerRingBuffer {
-            buffers:  Arc::new(DashMap::new()),
-        }
-    }
+#[rustler::nif]
+fn push(resource: ResourceArc<CircularBufferResource>, message: Binary) -> Result<Atom, Atom> {
+    let mut buffer = match resource.0.try_lock() {
+        Ok(buffer) => buffer,
+        Err(_) => return Err(atoms::lock_fail())
+    };
 
-    fn create_buffer(&self, player_id: u64, capacity: usize) {
-        self.buffers.insert(player_id, CircularBuffer::new(capacity));
+    match buffer.push(message.as_slice().to_vec()) {
+        Ok(_) => Ok(atoms::ok()),
+        Err(e) => Err(e)
     }
-
 
 }
 
-lazy_static! {
-    static ref PLAYER_RING_BUFFER: PlayerRingBuffer = PlayerRingBuffer::new();
+#[rustler::nif]
+fn last(resource: ResourceArc<CircularBufferResource>, num: usize) -> Result<Vec<Vec<u8>>, Atom> {
+    let buffer = match resource.0.try_lock() {
+        Ok(buffer) => buffer,
+        Err(_) => return Err(atoms::lock_fail())
+    };
+
+    match buffer.last(num) {
+        Ok(result) => Ok(result),
+        Err(e) => Err(e)
+    }
 }
 
 
 #[rustler::nif]
-fn new(uid: u64, capacity: usize) -> Result<Atom, Atom> {
-    PLAYER_RING_BUFFER.create_buffer(uid, capacity);
-    Ok(atoms::ok())
+fn size(resource: ResourceArc<CircularBufferResource>) -> Result<usize, Atom> {
+    let buffer = match resource.0.try_lock() {
+        Ok(buffer) => buffer,
+        Err(_) => return Err(atoms::lock_fail())
+    };
+    Ok(buffer.capacity())
 }
-
-#[rustler::nif]
-fn remove(uid: u64) -> Result<Atom, Atom> {
-    PLAYER_RING_BUFFER.buffers.remove(&uid);
-    Ok(atoms::ok())
-}
-
-#[rustler::nif]
-fn push(uid: u64, message: Binary) -> Result<Atom, Atom> {
-    let message = message.as_slice().to_vec();
-    match PLAYER_RING_BUFFER.buffers.get(&uid) {
-        Some(buffer) =>  buffer.push(message),
-        None => Err(atoms::not_found())
-    }
-}
-
-#[rustler::nif]
-fn last(uid: u64, num: usize) -> Result<Vec<Vec<u8>>, Atom> {
-    if num == 0 {
-        return Ok(Vec::new());
-    }
-    match PLAYER_RING_BUFFER.buffers.get(&uid) {
-        Some(buffer) => {
-            buffer.last(num)
-        }
-        None => Err(atoms::not_found())
-    }
-}
-
-rustler::init!("Elixir.CircularBufferRs.Native", [new,remove,push,last]);
 

@@ -31,7 +31,7 @@ defmodule CircularBufferRs.MixProject do
 
   defp package do
     [
-      maintainers: ["Discord Core Infrastructure"],
+      maintainers: ["Matr1x/IllusionColors"],
       licenses: ["MIT"],
       name: :circular_buffer_rs,
       description: "CircularBufferRs is a fast and efficient Rust backed circular buffer.",
