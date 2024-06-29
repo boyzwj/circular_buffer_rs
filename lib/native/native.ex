@@ -13,19 +13,19 @@ defmodule CircularBufferRs.Native do
     # nif_versions: ["2.16"],
     version: version
 
-  def new(_uid, _size) do
+  def new(_size) do
     :erlang.nif_error(:nif_not_loaded)
   end
 
-  def push(_uid, _bytes) do
+  def push(_cb, _bytes) do
     :erlang.nif_error(:nif_not_loaded)
   end
 
-  def last(_uid, _count) do
+  def last(_cb, _count) do
     :erlang.nif_error(:nif_not_loaded)
   end
 
-  def remove(_uid) do
+  def size(_cb) do
     :erlang.nif_error(:nif_not_loaded)
   end
 end
