@@ -14,17 +14,17 @@ defmodule CircularBufferRsTest do
 
   test "push" do
     {:ok, ref} = CircularBufferRs.new(5)
-    assert CircularBufferRs.push(ref, "hello") == {:ok, :ok}
+    assert CircularBufferRs.push(ref, "hello") == :ok
   end
 
   test "last" do
     {:ok, ref} = CircularBufferRs.new(5)
-    assert CircularBufferRs.push(ref, "1") == {:ok, :ok}
-    assert CircularBufferRs.push(ref, "2") == {:ok, :ok}
-    assert CircularBufferRs.push(ref, "3") == {:ok, :ok}
-    assert CircularBufferRs.push(ref, "4") == {:ok, :ok}
-    assert CircularBufferRs.push(ref, "5") == {:ok, :ok}
-    assert CircularBufferRs.push(ref, "6") == {:ok, :ok}
-    assert CircularBufferRs.last(ref, 2) == {:ok, [~c"5", ~c"6"]}
+    assert CircularBufferRs.push(ref, "1") == :ok
+    assert CircularBufferRs.push(ref, "2") == :ok
+    assert CircularBufferRs.push(ref, "3") == :ok
+    assert CircularBufferRs.push(ref, "4") == :ok
+    assert CircularBufferRs.push(ref, 5) == :ok
+    assert CircularBufferRs.push(ref, :a) == :ok
+    assert CircularBufferRs.last(ref, 2) == {:ok, [5, :a]}
   end
 end

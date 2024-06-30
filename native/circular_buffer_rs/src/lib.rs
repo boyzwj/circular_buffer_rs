@@ -1,8 +1,11 @@
 use std::collections::VecDeque;
 use rustler::{Atom, Env, Term};
+use rustler::types::tuple::get_tuple;
 use rustler::resource::ResourceArc;
-use rustler::types::binary::Binary;
 use std::sync::Mutex;
+mod supported_term;
+use crate::supported_term::SupportedTerm;
+
 #[cfg(not(target_env = "msvc"))]
 use tikv_jemallocator::Jemalloc;
 
@@ -49,7 +52,7 @@ fn load(env: Env, _info: Term) -> bool {
 }
 
 pub struct CircularBuffer {
-    buffer: VecDeque<Vec<u8>>,
+    buffer: VecDeque<SupportedTerm>,
     capacity: usize,
 }
 
@@ -62,26 +65,26 @@ impl CircularBuffer {
         }
     }
 
-    pub fn push(&mut self, item: Vec<u8>) -> Result<Atom, Atom> {
+    pub fn push(&mut self, item: SupportedTerm) -> Atom {
 
         if self.buffer.len() == self.capacity {
             self.buffer.pop_front();
         }
         self.buffer.push_back(item); // 将新元素添加到缓冲区的末尾
-        Ok(atoms::ok())
+        atoms::ok()
     }
 
-    pub fn get(&self, index: usize) -> Option<Vec<u8>> {
-        self.buffer.get(index).cloned()
+    pub fn get(&self, index: usize) -> Option<&SupportedTerm> {
+        self.buffer.get(index)
     }
 
-    pub fn last(&self, length: usize) -> Result<Vec<Vec<u8>>, Atom> {
+    pub fn last(&self, length: usize) -> Result<Vec<SupportedTerm>, Atom> {
         if length > self.buffer.len() {
             return Err(atoms::index_out_of_bounds());
         }
         let end = self.buffer.len();
         let start = end - length;
-        let result = self.buffer.range(start..end).cloned().collect();
+        let result: Vec<SupportedTerm> = self.buffer.range(start..end).cloned().collect();
         Ok(result)
     }
 
@@ -108,21 +111,21 @@ fn new(capacity: usize) -> (Atom, CircularBufferArc) {
 }
 
 #[rustler::nif]
-fn push(resource: ResourceArc<CircularBufferResource>, message: Binary) -> Result<Atom, Atom> {
+fn push(resource: ResourceArc<CircularBufferResource>, term: Term) -> Atom {
+    let item = match convert_to_supported_term(&term) {
+        None => return atoms::unsupported_type(),
+        Some(term) => term,
+    };
+    
     let mut buffer = match resource.0.try_lock() {
         Ok(buffer) => buffer,
-        Err(_) => return Err(atoms::lock_fail())
+        Err(_) => return atoms::lock_fail()
     };
-
-    match buffer.push(message.as_slice().to_vec()) {
-        Ok(_) => Ok(atoms::ok()),
-        Err(e) => Err(e)
-    }
-
+    buffer.push(item) 
 }
 
 #[rustler::nif]
-fn last(resource: ResourceArc<CircularBufferResource>, num: usize) -> Result<Vec<Vec<u8>>, Atom> {
+fn last(resource: ResourceArc<CircularBufferResource>, num: usize) -> Result<Vec<SupportedTerm>, Atom> {
     let buffer = match resource.0.try_lock() {
         Ok(buffer) => buffer,
         Err(_) => return Err(atoms::lock_fail())
@@ -144,3 +147,57 @@ fn size(resource: ResourceArc<CircularBufferResource>) -> Result<usize, Atom> {
     Ok(buffer.capacity())
 }
 
+
+
+fn convert_to_supported_term(term: &Term) -> Option<SupportedTerm> {
+    if term.is_number() {
+        match term.decode() {
+            Ok(i) => Some(SupportedTerm::Integer(i)),
+            Err(_) => None,
+        }
+    } else if term.is_atom() {
+        match term.atom_to_string() {
+            Ok(a) => Some(SupportedTerm::Atom(a)),
+            Err(_) => None,
+        }
+    } else if term.is_tuple() {
+        match get_tuple(*term) {
+            Ok(t) => {
+                let initial_length = t.len();
+                let inner_terms: Vec<SupportedTerm> = t
+                    .into_iter()
+                    .filter_map(|i: Term| convert_to_supported_term(&i))
+                    .collect();
+                if initial_length == inner_terms.len() {
+                    Some(SupportedTerm::Tuple(inner_terms))
+                } else {
+                    None
+                }
+            }
+            Err(_) => None,
+        }
+    } else if term.is_list() {
+        match term.decode::<Vec<Term>>() {
+            Ok(l) => {
+                let initial_length = l.len();
+                let inner_terms: Vec<SupportedTerm> = l
+                    .into_iter()
+                    .filter_map(|i: Term| convert_to_supported_term(&i))
+                    .collect();
+                if initial_length == inner_terms.len() {
+                    Some(SupportedTerm::List(inner_terms))
+                } else {
+                    None
+                }
+            }
+            Err(_) => None,
+        }
+    } else if term.is_binary() {
+        match term.decode() {
+            Ok(b) => Some(SupportedTerm::Bitstring(b)),
+            Err(_) => None,
+        }
+    } else {
+        None
+    }
+}
