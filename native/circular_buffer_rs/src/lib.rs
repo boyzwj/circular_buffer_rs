@@ -1,4 +1,3 @@
-use std::collections::VecDeque;
 use rustler::{Atom, Env, Term};
 use rustler::types::tuple::get_tuple;
 use rustler::resource::ResourceArc;
@@ -9,11 +8,10 @@ use crate::supported_term::SupportedTerm;
 #[cfg(not(target_env = "msvc"))]
 use tikv_jemallocator::Jemalloc;
 
-
-
 #[cfg(not(target_env = "msvc"))]
 #[global_allocator]
 static GLOBAL_ALLOCATOR: Jemalloc = Jemalloc;
+
 mod atoms {
     rustler::atoms! {
         // Common Atoms
@@ -37,11 +35,9 @@ mod atoms {
     }
 }
 
-
 pub struct CircularBufferResource(Mutex<CircularBuffer>);
 
 type CircularBufferArc = ResourceArc<CircularBufferResource>;
-
 
 rustler::init!("Elixir.CircularBufferRs.Native", [new, push, last, size],
     load = load);
@@ -52,57 +48,69 @@ fn load(env: Env, _info: Term) -> bool {
 }
 
 pub struct CircularBuffer {
-    buffer: VecDeque<SupportedTerm>,
+    buffer: Box<[Option<SupportedTerm>]>,
     capacity: usize,
+    size: usize,
+    start: usize,
+    end: usize,
 }
 
 impl CircularBuffer {
     pub fn new(capacity: usize) -> CircularBuffer {
-        let buffer = VecDeque::with_capacity(capacity);
+        let buffer = vec![None; capacity].into_boxed_slice();
         CircularBuffer {
             buffer,
             capacity,
+            size: 0,
+            start: 0,
+            end: 0,
         }
     }
 
     pub fn push(&mut self, item: SupportedTerm) -> Atom {
-
-        if self.buffer.len() == self.capacity {
-            self.buffer.pop_front();
+        self.buffer[self.end] = Some(item);
+        self.end = (self.end + 1) % self.capacity;
+        if self.size < self.capacity {
+            self.size += 1;
+        } else {
+            self.start = (self.start + 1) % self.capacity;
         }
-        self.buffer.push_back(item); // 将新元素添加到缓冲区的末尾
         atoms::ok()
     }
 
     pub fn get(&self, index: usize) -> Option<&SupportedTerm> {
-        self.buffer.get(index)
+        if index >= self.size {
+            return None;
+        }
+        self.buffer[(self.start + index) % self.capacity].as_ref()
     }
 
     pub fn last(&self, length: usize) -> Result<Vec<SupportedTerm>, Atom> {
-        if length > self.buffer.len() {
+        if length > self.size {
             return Err(atoms::index_out_of_bounds());
         }
-        let end = self.buffer.len();
-        let start = end - length;
-        let result: Vec<SupportedTerm> = self.buffer.range(start..end).cloned().collect();
+        let mut result = Vec::with_capacity(length);
+        for i in 0..length {
+            let idx = (self.end + self.capacity - length + i) % self.capacity;
+            if let Some(ref item) = self.buffer[idx] {
+                result.push(item.clone());
+            }
+        }
         Ok(result)
     }
 
-
     pub fn len(&self) -> usize {
-        self.buffer.len()
+        self.size
     }
 
     pub fn is_empty(&self) -> bool {
-        self.buffer.is_empty()
+        self.size == 0
     }
 
     pub fn capacity(&self) -> usize {
         self.capacity
     }
 }
-
-
 
 #[rustler::nif]
 fn new(capacity: usize) -> (Atom, CircularBufferArc) {
@@ -111,92 +119,64 @@ fn new(capacity: usize) -> (Atom, CircularBufferArc) {
 }
 
 #[rustler::nif]
-fn push(resource: ResourceArc<CircularBufferResource>, term: Term) -> Atom {
+fn push(resource: CircularBufferArc, term: Term) -> Atom {
     let item = match convert_to_supported_term(&term) {
         None => return atoms::unsupported_type(),
         Some(term) => term,
     };
-    
-    let mut buffer = match resource.0.try_lock() {
-        Ok(buffer) => buffer,
-        Err(_) => return atoms::lock_fail()
-    };
-    buffer.push(item) 
+
+    with_locked_resource(resource, |buffer| buffer.push(item))
 }
 
 #[rustler::nif]
-fn last(resource: ResourceArc<CircularBufferResource>, num: usize) -> Result<Vec<SupportedTerm>, Atom> {
-    let buffer = match resource.0.try_lock() {
-        Ok(buffer) => buffer,
-        Err(_) => return Err(atoms::lock_fail())
-    };
+fn last(resource: CircularBufferArc, num: usize) -> Result<Vec<SupportedTerm>, Atom> {
+    with_locked_resource(resource, |buffer| buffer.last(num))
+}
 
-    match buffer.last(num) {
-        Ok(result) => Ok(result),
-        Err(e) => Err(e)
+#[rustler::nif]
+fn size(resource: CircularBufferArc) -> Result<usize, Atom> {
+    with_locked_resource(resource, |buffer| Ok(buffer.capacity()))
+}
+
+fn with_locked_resource<F, R>(resource: CircularBufferArc, f: F) -> R
+where
+    F: FnOnce(&mut CircularBuffer) -> R,
+{
+    match resource.0.lock() {
+        Ok(mut buffer) => f(&mut buffer),
+        Err(_) => panic!("Failed to lock the buffer"), // Or you can use a custom error handling
     }
 }
 
-
-#[rustler::nif]
-fn size(resource: ResourceArc<CircularBufferResource>) -> Result<usize, Atom> {
-    let buffer = match resource.0.try_lock() {
-        Ok(buffer) => buffer,
-        Err(_) => return Err(atoms::lock_fail())
-    };
-    Ok(buffer.capacity())
-}
-
-
-
 fn convert_to_supported_term(term: &Term) -> Option<SupportedTerm> {
     if term.is_number() {
-        match term.decode() {
-            Ok(i) => Some(SupportedTerm::Integer(i)),
-            Err(_) => None,
-        }
+        term.decode().ok().map(SupportedTerm::Integer)
     } else if term.is_atom() {
-        match term.atom_to_string() {
-            Ok(a) => Some(SupportedTerm::Atom(a)),
-            Err(_) => None,
-        }
+        term.atom_to_string().ok().map(SupportedTerm::Atom)
     } else if term.is_tuple() {
-        match get_tuple(*term) {
-            Ok(t) => {
+        get_tuple(*term)
+            .ok()
+            .and_then(|t| {
                 let initial_length = t.len();
                 let inner_terms: Vec<SupportedTerm> = t
                     .into_iter()
                     .filter_map(|i: Term| convert_to_supported_term(&i))
                     .collect();
-                if initial_length == inner_terms.len() {
-                    Some(SupportedTerm::Tuple(inner_terms))
-                } else {
-                    None
-                }
-            }
-            Err(_) => None,
-        }
+                (initial_length == inner_terms.len()).then_some(SupportedTerm::Tuple(inner_terms))
+            })
     } else if term.is_list() {
-        match term.decode::<Vec<Term>>() {
-            Ok(l) => {
+        term.decode::<Vec<Term>>()
+            .ok()
+            .and_then(|l| {
                 let initial_length = l.len();
                 let inner_terms: Vec<SupportedTerm> = l
                     .into_iter()
                     .filter_map(|i: Term| convert_to_supported_term(&i))
                     .collect();
-                if initial_length == inner_terms.len() {
-                    Some(SupportedTerm::List(inner_terms))
-                } else {
-                    None
-                }
-            }
-            Err(_) => None,
-        }
+                (initial_length == inner_terms.len()).then_some(SupportedTerm::List(inner_terms))
+            })
     } else if term.is_binary() {
-        match term.decode() {
-            Ok(b) => Some(SupportedTerm::Bitstring(b)),
-            Err(_) => None,
-        }
+        term.decode().ok().map(SupportedTerm::Bitstring)
     } else {
         None
     }

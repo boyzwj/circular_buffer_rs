@@ -7,7 +7,7 @@ Benchee.run(%{
   "circular_buffer_add" => fn ->CircularBuffer.insert(a, buffer) end,
   "circular_buffer_rs_add" => fn -> CircularBufferRs.push(b, buffer) end
 },
-  warmup: 1,
+  warmup: 2,
   time: 5,
   memory_time: 2,
   reduction_time: 2)
