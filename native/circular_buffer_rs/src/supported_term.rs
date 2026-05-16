@@ -26,7 +26,7 @@ pub enum SupportedTerm {
     Atom(String),
     Tuple(Vec<SupportedTerm>),
     List(Vec<SupportedTerm>),
-    Bitstring(String),
+    Bitstring(Vec<u8>),
 }
 
 impl Encoder for SupportedTerm {
@@ -42,7 +42,7 @@ impl Encoder for SupportedTerm {
                 make_tuple(env, terms.as_ref()).encode(env)
             }
             SupportedTerm::List(inner) => inner.encode(env),
-            SupportedTerm::Bitstring(inner) => inner.encode(env),
+            SupportedTerm::Bitstring(inner) => inner.as_slice().encode(env),
         }
     }
 }

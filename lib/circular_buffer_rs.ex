@@ -28,7 +28,9 @@ defmodule CircularBufferRs do
   Returns the capacity of the buffer.
   """
   def size(cb) do
-    {:ok, size} = Native.size(cb)
-    size
+    case Native.size(cb) do
+      {:ok, size} -> size
+      {:error, reason} -> raise "size error: #{reason}"
+    end
   end
 end
